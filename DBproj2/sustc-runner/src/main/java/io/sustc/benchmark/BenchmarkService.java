@@ -20,32 +20,62 @@ import java.util.concurrent.atomic.AtomicLong;
 @Slf4j
 public class BenchmarkService {
 
+    private final Map<Long, String> sentDanmu = new ConcurrentHashMap<>();
+    private final Set<String> postedVideo = new ConcurrentSkipListSet<>();
+    private final Set<Long> registeredUser = new ConcurrentSkipListSet<>();
     @Autowired
     private BenchmarkConfig config;
-
     @Autowired
     private DatabaseService databaseService;
-
     @Autowired(required = false)
     private DanmuService danmuService;
-
     @Autowired(required = false)
     private RecommenderService recommenderService;
-
     @Autowired(required = false)
     private UserService userService;
-
     @Autowired(required = false)
     private VideoService videoService;
-
     @Autowired
     private ThreadSafeFury fury;
 
-    private final Map<Long, String> sentDanmu = new ConcurrentHashMap<>();
+    private static boolean collectionEquals(Collection<?> expect, Collection<?> actual) {
+        return Objects.equals(expect, actual)
+                || expect.isEmpty() && Objects.isNull(actual);
+    }
 
-    private final Set<String> postedVideo = new ConcurrentSkipListSet<>();
+    private static boolean longArrayAsSetEquals(long[] expect, long[] actual) {
+        if (expect.length != actual.length) {
+            return false;
+        }
+        val expectSet = new HashSet<Long>();
+        for (val i : expect) {
+            expectSet.add(i);
+        }
+        for (val i : actual) {
+            if (!expectSet.remove(i)) {
+                return false;
+            }
+        }
+        return expectSet.isEmpty();
+    }
 
-    private final Set<Long> registeredUser = new ConcurrentSkipListSet<>();
+    private static <T> boolean arrayAsSetEquals(T[] expect, T[] actual) {
+        if (expect.length != actual.length) {
+            return false;
+        }
+        return Objects.equals(new HashSet<>(Arrays.asList(expect)), new HashSet<>(Arrays.asList(actual)));
+    }
+
+    private static boolean userInfoEquals(UserInfoResp expect, UserInfoResp actual) {
+        return expect.getMid() == actual.getMid()
+                && expect.getCoin() == actual.getCoin()
+                && longArrayAsSetEquals(expect.getFollowing(), actual.getFollowing())
+                && longArrayAsSetEquals(expect.getFollower(), actual.getFollower())
+                && arrayAsSetEquals(expect.getWatched(), actual.getWatched())
+                && arrayAsSetEquals(expect.getLiked(), actual.getLiked())
+                && arrayAsSetEquals(expect.getCollected(), actual.getCollected())
+                && arrayAsSetEquals(expect.getPosted(), actual.getPosted());
+    }
 
     @BenchmarkStep(order = 0, description = "Truncate tables")
     public void truncate() {
@@ -326,22 +356,23 @@ public class BenchmarkService {
 
         val danmuIDs = new ArrayList<>(sentDanmu.keySet());
         val random = new Random();
-
-        cases.entrySet().parallelStream().forEach(it -> {
-            try {
-                val danmuId = danmuIDs.get(random.nextInt(danmuIDs.size()));
-                val res = danmuService.likeDanmu(it.getValue(), danmuId);
-                val danmuBv = sentDanmu.get(danmuId);
-                val watched = Arrays.asList(userService.getUserInfo(it.getKey()).getWatched()).contains(danmuBv);
-                if (watched == res) {
-                    pass.incrementAndGet();
-                } else {
-                    log.debug("Wrong answer for {}: expected {}, got {}", it.getKey(), watched, res);
+        if (!danmuIDs.isEmpty()) {
+            cases.entrySet().parallelStream().forEach(it -> {
+                try {
+                    val danmuId = danmuIDs.get(random.nextInt(danmuIDs.size()));
+                    val res = danmuService.likeDanmu(it.getValue(), danmuId);
+                    val danmuBv = sentDanmu.get(danmuId);
+                    val watched = Arrays.asList(userService.getUserInfo(it.getKey()).getWatched()).contains(danmuBv);
+                    if (watched == res) {
+                        pass.incrementAndGet();
+                    } else {
+                        log.debug("Wrong answer for {}: expected {}, got {}", it.getKey(), watched, res);
+                    }
+                } catch (Exception e) {
+                    log.error("Exception thrown for {}", it.getKey(), e);
                 }
-            } catch (Exception e) {
-                log.error("Exception thrown for {}", it.getKey(), e);
-            }
-        });
+            });
+        }
 
         return new BenchmarkResult(pass, null);
     }
@@ -674,44 +705,5 @@ public class BenchmarkService {
     private <T> T deserialize(String... path) {
         val file = Paths.get(config.getDataPath(), path);
         return (T) fury.deserialize(Files.readAllBytes(file));
-    }
-
-    private static boolean collectionEquals(Collection<?> expect, Collection<?> actual) {
-        return Objects.equals(expect, actual)
-                || expect.isEmpty() && Objects.isNull(actual);
-    }
-
-    private static boolean longArrayAsSetEquals(long[] expect, long[] actual) {
-        if (expect.length != actual.length) {
-            return false;
-        }
-        val expectSet = new HashSet<Long>();
-        for (val i : expect) {
-            expectSet.add(i);
-        }
-        for (val i : actual) {
-            if (!expectSet.remove(i)) {
-                return false;
-            }
-        }
-        return expectSet.isEmpty();
-    }
-
-    private static <T> boolean arrayAsSetEquals(T[] expect, T[] actual) {
-        if (expect.length != actual.length) {
-            return false;
-        }
-        return Objects.equals(new HashSet<>(Arrays.asList(expect)), new HashSet<>(Arrays.asList(actual)));
-    }
-
-    private static boolean userInfoEquals(UserInfoResp expect, UserInfoResp actual) {
-        return expect.getMid() == actual.getMid()
-                && expect.getCoin() == actual.getCoin()
-                && longArrayAsSetEquals(expect.getFollowing(), actual.getFollowing())
-                && longArrayAsSetEquals(expect.getFollower(), actual.getFollower())
-                && arrayAsSetEquals(expect.getWatched(), actual.getWatched())
-                && arrayAsSetEquals(expect.getLiked(), actual.getLiked())
-                && arrayAsSetEquals(expect.getCollected(), actual.getCollected())
-                && arrayAsSetEquals(expect.getPosted(), actual.getPosted());
     }
 }

@@ -19,27 +19,18 @@ class DanmuServiceImpl implements DanmuService {
 
     @Override
     public long sendDanmu(AuthInfo auth, String bv, String content, float time) {
-
-        /* [apiNote and corner case handling as before] */
-
         String sql_danmu = "INSERT INTO DanmuRecord (bv, mid, time, content, postTime, likedBy) VALUES (?, ?, ?, ?, ?, ?) RETURNING danmu_id;";
         Timestamp now = Timestamp.valueOf(LocalDateTime.now());
         UserImpl userimpl = new UserImpl();
         try (Connection conn = dataSource.getConnection()) {
-            if (!userimpl.isValidAuth(auth, conn) || !is_valid_bv(bv, conn) || !is_valid_content(content) || !is_valid_video(bv, auth, now, conn)) {
+            if (!userimpl.isValidAuth(auth, conn)) {
+                return -1;
+            } else {
+                auth = userimpl.construct_full_authinfo(auth, conn);
+            }
+            if (!is_valid_bv(bv, conn) || !is_valid_content(content) || !is_valid_video(bv, auth, now, conn, time)) {
                 return -1;
             }
-            if (!userimpl.isValidAuth(auth, conn)) {
-                return auth.getMid();
-            } else if (!is_valid_bv(bv, conn)) {
-                return 2;
-            } else if (!is_valid_content(content)) {
-                return 3;
-            } else if (!is_valid_video(bv, auth, now, conn)) {
-                return 4;
-            }
-
-
             try (PreparedStatement stmt = conn.prepareStatement(sql_danmu)) {
                 stmt.setString(1, bv);
                 stmt.setLong(2, auth.getMid());
@@ -53,7 +44,7 @@ class DanmuServiceImpl implements DanmuService {
                 if (generatedKeys.next()) {
                     return generatedKeys.getLong(1); // Return the generated danmu_id
                 } else {
-                    throw new SQLException("Insertion failed, no ID obtained.");
+                    return -1;
                 }
             }
         } catch (SQLException e) {
@@ -98,8 +89,8 @@ class DanmuServiceImpl implements DanmuService {
                 from videorecord
                 where bv = ?;
                 """;
-        try {
-            Connection connection = dataSource.getConnection();
+        try (Connection connection = dataSource.getConnection()) {
+
             PreparedStatement stmt = connection.prepareStatement(sql_video);
             stmt.setString(1, bv);
             ResultSet resultSet = stmt.executeQuery();
@@ -149,25 +140,28 @@ class DanmuServiceImpl implements DanmuService {
     @Override
     public boolean likeDanmu(AuthInfo auth, long id) {
         UserImpl userimpl = new UserImpl();
-        try {
-            Connection con = dataSource.getConnection();
+        try (Connection con = dataSource.getConnection()) {
             if (!userimpl.isValidAuth(auth, con)) {
                 return false;
+            } else {
+                auth = userimpl.construct_full_authinfo(auth, con);
             }
             String sql_find_danmu = """
-                    select bv,likedby
+                    select bv,likedby,time
                     from danmurecord
                     where danmu_id = ?;""";   // find the danmu by its id
             PreparedStatement stmt_danmu = con.prepareStatement(sql_find_danmu);
             stmt_danmu.setLong(1, id);
             ResultSet rs = stmt_danmu.executeQuery();
             String bv;
+            float time;
             List<Long> mids = new ArrayList<>();
             Timestamp now = Timestamp.valueOf(LocalDateTime.now());
 
             if (rs.next()) {
                 bv = rs.getString(1);
-                if (!is_valid_video(bv, auth, now, con)) {
+                time = rs.getFloat(3);
+                if (!is_valid_video(bv, auth, now, con, time)) {
                     return false;
                 }
                 Array sqlArray = rs.getArray(2);
@@ -204,8 +198,6 @@ class DanmuServiceImpl implements DanmuService {
     }
 
 
-
-
     private boolean is_valid_bv(String bv, Connection connection) {
         if (bv == null || bv.isEmpty()) {
             return false;
@@ -236,20 +228,21 @@ class DanmuServiceImpl implements DanmuService {
         return content != null && !content.isEmpty();
     }
 
-    private boolean is_valid_video(String bv, AuthInfo authInfo, Timestamp now, Connection connection) {
+    private boolean is_valid_video(String bv, AuthInfo authInfo, Timestamp now, Connection connection, Float sendTime) {
 
         String query = """
                 SELECT EXISTS (
-                    SELECT 1
-                    FROM ViewRecord
-                    WHERE bv = ?
-                        AND mid = ?
-                )
-                AND (
-                    publicTime IS NULL OR publicTime < ?
-                )
-                FROM VideoRecord
-                WHERE bv = ?;
+                                 SELECT 1
+                                 FROM ViewRecord
+                                 WHERE bv = ?
+                                   AND mid = ?
+                             )
+                             AND (
+                                 publicTime   IS not NULL OR publicTime > ?
+                             )and (duration > ?)
+                             FROM VideoRecord
+                             WHERE bv = ?;
+                             
                 """;
         long mid = authInfo.getMid();
         try (
@@ -258,7 +251,8 @@ class DanmuServiceImpl implements DanmuService {
             pstmt.setString(1, bv);
             pstmt.setLong(2, mid);
             pstmt.setTimestamp(3, now);
-            pstmt.setString(4, bv);
+            pstmt.setFloat(4, sendTime);
+            pstmt.setString(5, bv);
             ResultSet rs = pstmt.executeQuery();
 
             if (rs.next()) {
@@ -271,5 +265,4 @@ class DanmuServiceImpl implements DanmuService {
 
         return false;
     }
-
 }

@@ -105,7 +105,6 @@ public class DatabaseServiceImpl implements DatabaseService {
                              LEFT JOIN AggregatedFavorites afv ON ur.mid = afv.mid
                              LEFT JOIN AggregatedPosted ap ON ur.mid = ap.mid
                     WHERE NOT EXISTS (SELECT 1 FROM UserInfoResp WHERE mid = ur.mid);
-                                  
                     """;
             String sql_sync_2_authinfo = """              
                     INSERT INTO AuthInfo (mid, password, qq, wechat)
@@ -116,11 +115,32 @@ public class DatabaseServiceImpl implements DatabaseService {
                     FROM UserRecord
                     WHERE NOT EXISTS (SELECT 1 FROM AuthInfo WHERE mid = UserRecord.mid);
                     """;
+            String sql_disable_trigger = """
+                      ALTER TABLE UserRecord DISABLE TRIGGER ALL;
+                    ALTER TABLE ViewRecord DISABLE TRIGGER ALL;
+                    ALTER TABLE UserInfoResp DISABLE TRIGGER ALL;
+                    ALTER TABLE likes DISABLE TRIGGER ALL;
+                    ALTER TABLE favorites DISABLE TRIGGER ALL;
+                    ALTER TABLE VideoRecord DISABLE TRIGGER ALL;
+                    ALTER TABLE AuthInfo DISABLE TRIGGER ALL;
+                     alter table  danmurecord disable  trigger  all;
+
+                      """;
+            String sql_enable_trigger = """
+                                 ALTER TABLE UserRecord ENABLE TRIGGER ALL;
+                                 ALTER TABLE ViewRecord ENABLE TRIGGER ALL;
+                                 ALTER TABLE UserInfoResp ENABLE TRIGGER ALL;
+                                 ALTER TABLE likes ENABLE TRIGGER ALL;
+                                 ALTER TABLE favorites ENABLE TRIGGER ALL;
+                                 ALTER TABLE VideoRecord ENABLE TRIGGER ALL;
+                                 ALTER TABLE AuthInfo ENABLE TRIGGER ALL;
+                                 alter table  danmurecord enable  trigger  all;
+                                 
+                    """;
             try (Connection conn = dataSource.getConnection();
                  Statement sync = conn.createStatement(); PreparedStatement stmt_danmu = conn.prepareStatement(sql_danmu); PreparedStatement stmt_user = conn.prepareStatement(sql_user); PreparedStatement stmt_video = conn.prepareStatement(sql_video); PreparedStatement stmt_view = conn.prepareStatement(sql_view); PreparedStatement stmt_coin = conn.prepareStatement(sql_coin); PreparedStatement stmt_like = conn.prepareStatement(sql_like); PreparedStatement stmt_favorite = conn.prepareStatement(sql_favorite)) {
                 int cnt = 0;
-
-
+                sync.execute(sql_disable_trigger);
                 for (UserRecord temp : userRecords) {
                     long mid = temp.getMid();
                     stmt_user.setLong(1, mid);
@@ -133,7 +153,7 @@ public class DatabaseServiceImpl implements DatabaseService {
                     if (birthday != null && !birthday.isEmpty()) {
 
                         // 通过正则表达式匹配不同的格式
-                        String[] parts = null;
+                        String[] parts;
                         int month = 0;
                         int day = 0;
 
@@ -146,13 +166,13 @@ public class DatabaseServiceImpl implements DatabaseService {
                             month = Integer.parseInt(parts[0]);
                             day = Integer.parseInt(parts[1]);
                         } else {
-                            stmt_user.setNull(4, Types.DATE);
+                            stmt_user.setNull(4, java.sql.Types.DATE);
                         }
                         String completeBirthday = DefaultYear + "-" + month + "-" + day;
 
                         stmt_user.setDate(4, Date.valueOf(completeBirthday));
                     } else {
-                        stmt_user.setNull(4, Types.DATE);
+                        stmt_user.setNull(4, java.sql.Types.DATE);
                     }
                     short level = temp.getLevel();
                     stmt_user.setShort(5, level);
@@ -188,8 +208,7 @@ public class DatabaseServiceImpl implements DatabaseService {
                 }
                 stmt_user.executeBatch();
                 stmt_user.close();
-                sync.execute(sql_sync_2_userinforeq);
-                sync.execute(sql_sync_2_authinfo);
+
 
                 cnt = 0;
                 int cnt_view = 0;
@@ -298,14 +317,14 @@ public class DatabaseServiceImpl implements DatabaseService {
                 stmt_like.executeBatch();
                 stmt_coin.executeBatch();
 
-
+                sync.execute(sql_sync_2_userinforeq);
+                sync.execute(sql_sync_2_authinfo);
                 //close statements
                 stmt_video.close();
                 stmt_view.close();
                 stmt_like.close();
                 stmt_coin.close();
                 stmt_favorite.close();
-
                 for (DanmuRecord temp : danmuRecords) {
                     String Bv = temp.getBv();
                     long mid = temp.getMid();
@@ -334,6 +353,7 @@ public class DatabaseServiceImpl implements DatabaseService {
                 }
                 stmt_danmu.executeBatch();
 
+                sync.execute(sql_enable_trigger);
             } catch (SQLException e) {
                 throw new RuntimeException(e);
             }
